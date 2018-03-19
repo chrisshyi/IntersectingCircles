@@ -1,6 +1,5 @@
 from typing import List
 import math
-from copy import deepcopy
 
 
 class Circle:
@@ -35,6 +34,12 @@ def intersection_area(circles: List[Circle], y_min: int, y_max: int, step: float
     Calculates the total area of a list of overlapping circles
     """
     def intersect(circle, y):
+        """
+        Returns the intersection points of a circle with a horizontal line y = y
+        :param circle: The circle of interest
+        :param y: the horizontal line y = y
+        :return: the x coordinates of the two intersection points as a tuple
+        """
         dx: float = math.sqrt(circle.radius ** 2 - (y - circle.center_y) ** 2)
         return circle.center_x - dx, circle.center_x + dx
     
@@ -53,38 +58,6 @@ def intersection_area(circles: List[Circle], y_min: int, y_max: int, step: float
             right_end = x1
 
     return total * step
-
-    # while row != 0:
-    #     print("Row: {}".format(row))
-    #     row -= 1
-    #     y: float = y_min + step * row
-    #     circles_copy = []
-    #     for n in range(len(circles)):
-    #         circle = circles[n]
-    #
-    #         if y >= circle.y_high:
-    #             break
-    #         elif y > circle.y_low:
-    #             dx: float = math.sqrt(circle.radius ** 2 - (y - circle.center_y) ** 2)
-    #             circle.x_0 = circle.center_x - dx
-    #             circle.x_1 = circle.center_x + dx
-    #
-    #             circles.sort(key=lambda circle: circle.x_0)
-    #         else:
-    #             circles_copy: List[Circle] = deepcopy(circles)
-    #             circles_copy.remove(circle)
-    #             circles = circles_copy
-    #
-    #     right_end: float = circles[0].x_1
-    #     total += circles[0].x_1 - circles[0].x_0
-    #
-    #     for i in range(1, len(circles)):
-    #         circle = circles[i]
-    #         if circle.x_1 <= right_end:
-    #             continue
-    #         total += circle.x_1 - max(circle.x_0, right_end)
-    #         right_end = circle.x_1
-    # return total * step
 
 
 def main():

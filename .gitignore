@@ -2,3 +2,6 @@ bin/*
 lib/*
 *.json
 .idea/*
+lib64
+share/*
+pyvenv.cfg

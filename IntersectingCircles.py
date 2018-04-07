@@ -75,7 +75,7 @@ def is_inside_circle(circles, point):
     return False
 
 
-def monte_carlo_sampling(x_min, y_min, x_max, y_max, num_trials, circles, output_file):
+def monte_carlo_sampling(x_min, y_min, x_max, y_max, num_trials, circles, output_file, error_tolerance):
     """
     Estimates the area bound by a list of circles using Monte Carlo Sampling
     :param x_min: the lowest x coordinate bound by the circles
@@ -85,6 +85,7 @@ def monte_carlo_sampling(x_min, y_min, x_max, y_max, num_trials, circles, output
     :param num_trials: number of trials
     :param circles: list of Circle objects
     :param output_file: the output file to write the calculated data to
+    :param error_tolerance: the upper bound for 3 * standard deviation, as a percentage of the estimated area
     :return: estimated area, standard deviation of the estimated area
     """
     bound_box_area = (x_max - x_min) * (y_max - y_min)
@@ -106,15 +107,18 @@ def monte_carlo_sampling(x_min, y_min, x_max, y_max, num_trials, circles, output
             result_str = "{:.4f} +/- {:.4f} ({} samples)\n".format(estimated_area, std_dev, num_tries)
             print(result_str)
             output_file.write(result_str)
-            if std_dev * 3 <= (estimated_area / 100):  # adjust this error to the desired level of precision
+            if std_dev * 3 <= (estimated_area * error_tolerance / 100):
                 break
             num_trials *= 2
 
 
 def main():
 
-    circles = []
+    monte_carlo_error_tolerance = \
+        float(input("Please enter the Monte Carlo standard deviation you are willing to tolerate, as "
+                    "a percentage of the estimated area\n"))
 
+    step_size = int(input("The step size for the scanline method will be 1 / 2 ^ n, how big should n be?\n"))
     gazes_data = {}
 
     trial_min_max_data = {}
@@ -165,7 +169,7 @@ def main():
             center_y = float(row[5])
             radius = float(row[6]) / 2
 
-            if trial_num not in gazes_data:
+            if (file_num, trial_num) not in gazes_data:
                 gazes_data[(curr_file_num, curr_trial_num)] = []
             gazes_data[(curr_file_num, curr_trial_num)].append(Circle(center_x, center_y, radius))
 
@@ -192,7 +196,7 @@ def main():
             print('\n')
             min_max_data = trial_min_max_data[(file_num, trial_num)]
             # Adjust the step size up or down if less or more precision is desired, respectively
-            step: float = 1 / (1 << 12)
+            step: float = 1 / (1 << step_size)
             y_min_step = int(math.floor(min_max_data['y_min'] / step))
             y_max_step = int(math.ceil(min_max_data['y_max'] / step))
             area: float = intersection_area(gazes_data[(file_num, trial_num)], y_min_step, y_max_step, step)
@@ -204,7 +208,7 @@ def main():
             output_file.write(scanline_result_str)
             monte_carlo_sampling(min_max_data['x_min'], min_max_data['y_min'],
                                  min_max_data['x_max'], min_max_data['y_max'],
-                                 65536, gazes_data[(file_num, trial_num)], output_file)
+                                 65536, gazes_data[(file_num, trial_num)], output_file, monte_carlo_error_tolerance)
 
 
 if __name__ == "__main__":

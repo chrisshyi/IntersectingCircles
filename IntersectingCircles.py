@@ -1,6 +1,8 @@
 from typing import List
 import math
 import random
+import os
+import csv
 
 
 class Circle:
@@ -73,7 +75,7 @@ def is_inside_circle(circles, point):
     return False
 
 
-def monte_carlo_sampling(x_min, y_min, x_max, y_max, num_trials, circles):
+def monte_carlo_sampling(x_min, y_min, x_max, y_max, num_trials, circles, output_file):
     """
     Estimates the area bound by a list of circles using Monte Carlo Sampling
     :param x_min: the lowest x coordinate bound by the circles
@@ -82,6 +84,7 @@ def monte_carlo_sampling(x_min, y_min, x_max, y_max, num_trials, circles):
     :param y_max: the highest y coordinate bound by the circles
     :param num_trials: number of trials
     :param circles: list of Circle objects
+    :param output_file: the output file to write the calculated data to
     :return: estimated area, standard deviation of the estimated area
     """
     bound_box_area = (x_max - x_min) * (y_max - y_min)
@@ -100,43 +103,108 @@ def monte_carlo_sampling(x_min, y_min, x_max, y_max, num_trials, circles):
             estimated_area = bound_box_area * estimated_proportion
             std_dev = bound_box_area * math.sqrt(estimated_proportion * (1 - estimated_proportion) / num_trials)
 
-            print("{:.4f} +/- {:.4f} ({} samples)".format(estimated_area, std_dev, num_tries))
-            if std_dev * 3 <= 1e-1:  # adjust this error to the desired level of precision
+            result_str = "{:.4f} +/- {:.4f} ({} samples)\n".format(estimated_area, std_dev, num_tries)
+            print(result_str)
+            output_file.write(result_str)
+            if std_dev * 3 <= (estimated_area / 100):  # adjust this error to the desired level of precision
                 break
             num_trials *= 2
 
 
 def main():
+
+    circles = []
+
+    gazes_data = {}
+
+    trial_min_max_data = {}
+
+    data_file_path = os.path.abspath(input("Please enter the path to the data file\n"))
+    out_file_path = os.path.abspath(input("Please enter the path to the desired output file\n"))
+
+    curr_trial_num = 1
+    trial_num = 1
+
+    file_num = 0
+    curr_file_num = 0
+
     y_min = math.inf
     y_max = -math.inf
 
     x_min = math.inf
     x_max = -math.inf
 
-    # num_circle: int = int(input("Please enter the number of gazes: \n"))
-    # radius = float(input("Please enter the radius for the gazes: \n"))
-    circles = []
+    with open(data_file_path, 'r') as file:
+        csv_reader = csv.reader(file)
+        row_num = 0
+        for row in csv_reader:
+            # consume the first row which contains the headers for the columns
+            if row_num == 0:
+                row_num += 1
+                continue
 
-    with open("test.txt", 'r') as file:
-        for line in file:
-            split_line = line.split(" ")
-            center_x = float(split_line[0])
-            center_y = float(split_line[1])
-            radius = float(split_line[2])
+            trial_num = int(row[1])
+            file_num = int(row[0])
+            if (curr_file_num, curr_trial_num) != (file_num, trial_num):
+                trial_min_max_data[(curr_file_num, curr_trial_num)] = {}
+                trial_min_max_data[(curr_file_num, curr_trial_num)]['x_min'] = x_min
+                trial_min_max_data[(curr_file_num, curr_trial_num)]['x_max'] = x_max
+                trial_min_max_data[(curr_file_num, curr_trial_num)]['y_min'] = y_min
+                trial_min_max_data[(curr_file_num, curr_trial_num)]['y_max'] = y_max
 
-            circles.append(Circle(center_x, center_y, radius))
+                curr_trial_num = trial_num
+                curr_file_num = file_num
+
+                y_min = math.inf
+                y_max = -math.inf
+
+                x_min = math.inf
+                x_max = -math.inf
+
+            center_x = float(row[4])
+            center_y = float(row[5])
+            radius = float(row[6]) / 2
+
+            if trial_num not in gazes_data:
+                gazes_data[(curr_file_num, curr_trial_num)] = []
+            gazes_data[(curr_file_num, curr_trial_num)].append(Circle(center_x, center_y, radius))
+
             y_min = min(y_min, center_y - radius)
             y_max = max(y_max, center_y + radius)
 
             x_min = min(x_min, center_x - radius)
             x_max = max(x_max, center_x + radius)
 
-    step: float = 1 / (1 << 20)
-    y_min_step = int(math.floor(y_min / step))
-    y_max_step = int(math.ceil(y_max / step))
-    # area: float = intersection_area(circles, y_min_step, y_max_step, step)
-    # print("The total area of covered by the gazes is {:2f}, based on the scanline method".format(area))
-    monte_carlo_sampling(x_min, y_min, x_max, y_max, 65536, circles)
+    # add the data for the last trial number
+    trial_min_max_data[(file_num, trial_num)] = {}
+    trial_min_max_data[(file_num, trial_num)]['x_min'] = x_min
+    trial_min_max_data[(file_num, trial_num)]['x_max'] = x_max
+    trial_min_max_data[(file_num, trial_num)]['y_min'] = y_min
+    trial_min_max_data[(file_num, trial_num)]['y_max'] = y_max
+
+    with open(out_file_path, 'w') as output_file:
+        for (file_num, trial_num) in gazes_data:
+
+            print('file num: ' + str(file_num))
+            print('trial ' + str(trial_num))
+            for x in range(3):
+                output_file.write("-----------------")
+            print('\n')
+            min_max_data = trial_min_max_data[(file_num, trial_num)]
+            # Adjust the step size up or down if less or more precision is desired, respectively
+            step: float = 1 / (1 << 12)
+            y_min_step = int(math.floor(min_max_data['y_min'] / step))
+            y_max_step = int(math.ceil(min_max_data['y_max'] / step))
+            area: float = intersection_area(gazes_data[(file_num, trial_num)], y_min_step, y_max_step, step)
+            output_file.write("File Number: " + str(file_num) + '\n')
+            output_file.write("Trial Number: " + str(trial_num) + '\n')
+            scanline_result_str = \
+                "The total area of covered by the gazes is {:2f}, based on the scanline method\n".format(area)
+            print(scanline_result_str)
+            output_file.write(scanline_result_str)
+            monte_carlo_sampling(min_max_data['x_min'], min_max_data['y_min'],
+                                 min_max_data['x_max'], min_max_data['y_max'],
+                                 65536, gazes_data[(file_num, trial_num)], output_file)
 
 
 if __name__ == "__main__":

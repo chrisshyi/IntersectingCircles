@@ -3,6 +3,7 @@ import math
 import random
 import os
 import csv
+import multiprocessing
 from time import process_time
 
 
@@ -27,6 +28,51 @@ class Circle:
 
     def __eq__(self, other):
         return self.center_x == other.center_x and self.center_y == other.center_y and self.radius == other.radius
+
+
+class CircleWorker(multiprocessing.Process):
+
+    def __init__(self, task_queue, results_queue, trial_min_max_data, gazes_data, step_size,
+                 err_tolerance):
+        multiprocessing.Process.__init__(self)
+        self.task_queue = task_queue
+        self.results_queue = results_queue
+        self.trial_min_max_data = trial_min_max_data
+        self.gazes_data = gazes_data
+        self.step_size = step_size
+        self.err_tolerance = err_tolerance
+
+    def run(self):
+        while True:
+            next_task = self.task_queue.get() # task is the tuple (file number, trial number)
+            if next_task is None:
+                self.task_queue.task_done()
+                break
+            # append pieces of the result to this list, which will get stitched together
+            # at the end, for performance reasons
+            # https://waymoot.org/home/python_string/
+            result_list = []
+            min_max_data = self.trial_min_max_data[next_task]
+            gazes_data = self.gazes_data[next_task]
+            for x in range(3):
+                result_list.append("-----------------")
+            result_list.append("\n")
+            step = 1 / (1 << self.step_size)
+            y_min_step = int(math.floor(min_max_data['y_min'] / step))
+            y_max_step = int(math.ceil(min_max_data['y_max'] / step))
+            area: float = intersection_area(gazes_data, y_min_step, y_max_step, step)
+            result_list.append("File Number: {}\n".format(next_task[0]))
+            result_list.append("Trial Number: {}\n".format(next_task[1]))
+            scanline_result_str = \
+                "The total area of covered by the gazes is {:2f}, based on the scanline method\n".format(area)
+            result_list.append(scanline_result_str)
+            result_list.extend(monte_carlo_sampling(min_max_data['x_min'], min_max_data['y_min'],
+                                 min_max_data['x_max'], min_max_data['y_max'],
+                                 65536, gazes_data, self.err_tolerance))
+            result_str = "".join(result_list)
+            self.task_queue.task_done()
+            self.results_queue.put(result_str)
+        return
 
 
 def circle_distance(circle1: Circle, circle2: Circle):
@@ -76,7 +122,7 @@ def is_inside_circle(circles, point):
     return False
 
 
-def monte_carlo_sampling(x_min, y_min, x_max, y_max, num_trials, circles, output_file, error_tolerance):
+def monte_carlo_sampling(x_min, y_min, x_max, y_max, num_trials, circles, error_tolerance):
     """
     Estimates the area bound by a list of circles using Monte Carlo Sampling
     :param x_min: the lowest x coordinate bound by the circles
@@ -85,14 +131,15 @@ def monte_carlo_sampling(x_min, y_min, x_max, y_max, num_trials, circles, output
     :param y_max: the highest y coordinate bound by the circles
     :param num_trials: number of trials
     :param circles: list of Circle objects
-    :param output_file: the output file to write the calculated data to
     :param error_tolerance: the upper bound for 3 * standard deviation, as a percentage of the estimated area
-    :return: estimated area, standard deviation of the estimated area
+    :return: the estimates as a list of strings, which will then be concatenated with the scanline result
     """
     bound_box_area = (x_max - x_min) * (y_max - y_min)
 
     num_hits = 0
     num_tries = 0
+
+    result_list = []
 
     while True:
         if is_inside_circle(circles, (random.uniform(x_min, x_max), random.uniform(y_min, y_max))):
@@ -107,10 +154,11 @@ def monte_carlo_sampling(x_min, y_min, x_max, y_max, num_trials, circles, output
 
             result_str = "{:.4f} +/- {:.4f} ({} samples)\n".format(estimated_area, std_dev, num_tries)
             print(result_str)
-            output_file.write(result_str)
+            result_list.append(result_str)
             if std_dev * 3 <= (estimated_area * error_tolerance / 100):
                 break
             num_trials *= 2
+    return result_list
 
 
 def main():
@@ -188,28 +236,51 @@ def main():
     trial_min_max_data[(file_num, trial_num)]['y_max'] = y_max
 
     with open(out_file_path, 'w') as output_file:
-        for (file_num, trial_num) in gazes_data:
 
-            print('file num: ' + str(file_num))
-            print('trial ' + str(trial_num))
-            for x in range(3):
-                output_file.write("-----------------")
-            print('\n')
-            min_max_data = trial_min_max_data[(file_num, trial_num)]
-            # Adjust the step size up or down if less or more precision is desired, respectively
-            step: float = 1 / (1 << step_size)
-            y_min_step = int(math.floor(min_max_data['y_min'] / step))
-            y_max_step = int(math.ceil(min_max_data['y_max'] / step))
-            area: float = intersection_area(gazes_data[(file_num, trial_num)], y_min_step, y_max_step, step)
-            output_file.write("File Number: " + str(file_num) + '\n')
-            output_file.write("Trial Number: " + str(trial_num) + '\n')
-            scanline_result_str = \
-                "The total area of covered by the gazes is {:2f}, based on the scanline method\n".format(area)
-            print(scanline_result_str)
-            output_file.write(scanline_result_str)
-            monte_carlo_sampling(min_max_data['x_min'], min_max_data['y_min'],
-                                 min_max_data['x_max'], min_max_data['y_max'],
-                                 65536, gazes_data[(file_num, trial_num)], output_file, monte_carlo_error_tolerance)
+        # for (file_num, trial_num) in gazes_data:
+        #
+        #     print('file num: ' + str(file_num))
+        #     print('trial ' + str(trial_num))
+        #     for x in range(3):
+        #         output_file.write("-----------------")
+        #     print('\n')
+        #     min_max_data = trial_min_max_data[(file_num, trial_num)]
+        #     # Adjust the step size up or down if less or more precision is desired, respectively
+        #     step: float = 1 / (1 << step_size)
+        #     y_min_step = int(math.floor(min_max_data['y_min'] / step))
+        #     y_max_step = int(math.ceil(min_max_data['y_max'] / step))
+        #     area: float = intersection_area(gazes_data[(file_num, trial_num)], y_min_step, y_max_step, step)
+        #     output_file.write("File Number: " + str(file_num) + '\n')
+        #     output_file.write("Trial Number: " + str(trial_num) + '\n')
+        #     scanline_result_str = \
+        #         "The total area of covered by the gazes is {:2f}, based on the scanline method\n".format(area)
+        #     print(scanline_result_str)
+        #     output_file.write(scanline_result_str)
+        #     monte_carlo_sampling(min_max_data['x_min'], min_max_data['y_min'],
+        #                          min_max_data['x_max'], min_max_data['y_max'],
+        #                          65536, gazes_data[(file_num, trial_num)], output_file, monte_carlo_error_tolerance)
+        task_queue = multiprocessing.JoinableQueue()
+        results = multiprocessing.Queue()
+
+        workers = []
+        for i in range(4):
+            workers.append(CircleWorker(task_queue, results, trial_min_max_data, gazes_data,
+                                        step_size, monte_carlo_error_tolerance))
+        for worker in workers:
+            worker.start()
+
+        # Enqueue tasks
+        for task in gazes_data:
+            task_queue.put(task)
+
+        for i in range(4):
+            task_queue.put(None)  # poison pills to terminate the 4 workers
+
+        task_queue.join()
+
+        while not results.empty():
+            result = results.get()
+            output_file.write(result)
 
 
 if __name__ == "__main__":
@@ -218,3 +289,4 @@ if __name__ == "__main__":
     end_time = process_time()
     total_time = end_time - start_time
     print("Process took {} minutes and {} seconds of CPU time to complete".format(total_time // 60, total_time % 60))
+
